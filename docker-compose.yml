@@ -1,0 +1,95 @@
+# File: data-engineer-course/docker-compose.yml
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: de-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dataengineer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dataengineer123}
+      POSTGRES_DB: ${POSTGRES_DB:-data_engineer}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Named volume for data persistence
+      - postgres_data:/var/lib/postgresql/data
+      # Init scripts (only run on first start)
+      - ./week-01-02-sql-python/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-dataengineer} -d ${POSTGRES_DB:-data_engineer}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - de-network
+
+  # PgAdmin - Web UI for PostgreSQL
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: de-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@dataeng.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./week-01-02-sql-python/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - de-network
+
+  # Jupyter Lab - Python Development
+  jupyter:
+    build:
+      context: ./week-01-02-sql-python/jupyter
+      dockerfile: Dockerfile
+    container_name: de-jupyter
+    restart: unless-stopped
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-dataengineer}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-dataengineer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dataengineer123}
+      POSTGRES_DB: ${POSTGRES_DB:-data_engineer}
+      GENERATE_CUSTOMERS: ${GENERATE_CUSTOMERS:-1000}
+      GENERATE_PRODUCTS: ${GENERATE_PRODUCTS:-100}
+      GENERATE_ORDERS: ${GENERATE_ORDERS:-10000}
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    volumes:
+      - ./week-01-02-sql-python/exercises:/home/jovyan/work
+      - ./week-01-02-sql-python/scripts:/home/jovyan/scripts
+      - ./shared:/home/jovyan/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - de-network
+
+volumes:
+  postgres_data:
+    driver: local
+    name: de_postgres_data
+  pgadmin_data:
+    driver: local
+    name: de_pgadmin_data
+
+networks:
+  de-network:
+    driver: bridge
+    name: de_network

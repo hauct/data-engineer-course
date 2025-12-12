@@ -1,0 +1,6 @@
+# File: week-01-02-sql-python/scripts/requirements.txt
+
+psycopg2-binary==2.9.9
+faker==20.1.0
+python-dotenv==1.0.0
+tqdm==4.66.1

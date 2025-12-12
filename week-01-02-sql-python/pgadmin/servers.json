@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Data Engineer DB",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "data_engineer",
+      "Username": "dataengineer",
+      "SSLMode": "prefer"
+    }
+  }
+}
