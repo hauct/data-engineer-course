@@ -72,8 +72,13 @@ services:
     ports:
       - "${JUPYTER_PORT:-8888}:8888"
     volumes:
-      - ./week-01-02-sql-python/exercises:/home/jovyan/work
-      - ./week-01-02-sql-python/scripts:/home/jovyan/scripts
+      # Week 01-02: SQL & Python basics
+      - ./week-01-02-sql-python/exercises:/home/jovyan/week-01-02-sql-python/exercises
+      - ./week-01-02-sql-python/scripts:/home/jovyan/week-01-02-sql-python/scripts
+      # Week 03-04: Python ETL
+      - ./week-03-04-python-etl/notebooks:/home/jovyan/week-03-04-python-etl/notebooks
+      - ./week-03-04-python-etl/scripts:/home/jovyan/week-03-04-python-etl/scripts
+      # Shared resources
       - ./shared:/home/jovyan/shared
     depends_on:
       postgres:

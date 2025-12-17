@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
 
 # Set working directory
-WORKDIR /home/jovyan/work
+WORKDIR /home/jovyan
 
 # Expose port
 EXPOSE 8888
