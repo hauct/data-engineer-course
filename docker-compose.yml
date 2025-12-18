@@ -78,6 +78,8 @@ services:
       # Week 03-04: Python ETL
       - ./week-03-04-python-etl/notebooks:/home/jovyan/week-03-04-python-etl/notebooks
       - ./week-03-04-python-etl/scripts:/home/jovyan/week-03-04-python-etl/scripts
+      - ./week-03-04-python-etl/raw_data:/home/jovyan/week-03-04-python-etl/raw_data
+      - ./week-03-04-python-etl/sql:/home/jovyan/week-03-04-python-etl/sql
       # Shared resources
       - ./shared:/home/jovyan/shared
     depends_on:

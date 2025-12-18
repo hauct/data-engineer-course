@@ -4,11 +4,26 @@ import psycopg2
 from faker import Faker
 import random
 import os
+from datetime import date, timedelta
 from dotenv import load_dotenv
 from tqdm import tqdm
 
 load_dotenv()
+
+# ============================================================================
+# FIXED SEED FOR DETERMINISTIC DATA GENERATION
+# Ensures that every time you clear data and regenerate, 
+# you get the exact same dataset
+# ============================================================================
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+Faker.seed(RANDOM_SEED)
 fake = Faker()
+
+# Fixed date range for 2025
+START_DATE = date(2025, 1, 1)
+END_DATE = date(2025, 12, 31)
+TOTAL_DAYS = (END_DATE - START_DATE).days + 1  # 365 days
 
 def get_connection():
     """Create database connection"""
@@ -75,11 +90,15 @@ def generate_customers(conn, num_customers):
         
         country = fake.country()[:100]
         
+        # Use deterministic date within 2025 based on customer index
+        signup_offset = random.randint(0, TOTAL_DAYS - 1)
+        signup_date = START_DATE + timedelta(days=signup_offset)
+        
         customer = (
             fake.name()[:200],
             email[:200],
             country,
-            fake.date_between(start_date='-3y', end_date='today'),
+            signup_date,
             random.choice(['Premium', 'Standard', 'Basic'])
         )
         customers.append(customer)
@@ -150,7 +169,9 @@ def generate_orders(conn, num_orders):
         for i in tqdm(range(batch_count), desc=f"Batch {batch_num + 1}/{total_batches}"):
             order_id = batch_start + i + 1
             customer_id = random.choice(customer_ids)
-            order_date = fake.date_between(start_date='-2y', end_date='today')
+            # Use deterministic date within 2025 based on order index
+            order_offset = random.randint(0, TOTAL_DAYS - 1)
+            order_date = START_DATE + timedelta(days=order_offset)
             status = random.choices(
                 ['completed', 'pending', 'cancelled', 'returned'],
                 weights=[0.7, 0.15, 0.1, 0.05]

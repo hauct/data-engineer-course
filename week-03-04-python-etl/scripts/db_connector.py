@@ -1,13 +1,19 @@
 """
 Database Connection Module
-Handles PostgreSQL connections and query execution
+Handles PostgreSQL connections and query execution using SQLAlchemy
+
+Benefits of SQLAlchemy over raw psycopg2:
+- Better connection pooling
+- Full pandas compatibility (no warnings)
+- Handles edge cases (parameter limits, transactions)
+- Cleaner API
 """
 
-import psycopg2
 import pandas as pd
-from typing import Optional, Dict, Any, List
+from typing import Optional, List, Any
 import logging
-from contextlib import contextmanager
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 # Setup logging
 logging.basicConfig(
@@ -18,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseConnector:
-    """PostgreSQL Database Connector with connection pooling"""
+    """PostgreSQL Database Connector using SQLAlchemy"""
     
     def __init__(
         self,
@@ -28,81 +34,65 @@ class DatabaseConnector:
         user: str = 'dataengineer',
         password: str = 'dataengineer123'
     ):
-        """Initialize database connector"""
-        self.config = {
-            'host': host,
-            'port': port,
-            'database': database,
-            'user': user,
-            'password': password
-        }
+        """Initialize database connector with SQLAlchemy engine"""
+        self.connection_string = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+        
+        # Create SQLAlchemy engine with connection pooling
+        self.engine: Engine = create_engine(
+            self.connection_string,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True  # Verify connections before use
+        )
+        
         logger.info(f"Database connector initialized for {database}@{host}")
-    
-    @contextmanager
-    def get_connection(self):
-        """Context manager for database connections"""
-        conn = None
-        try:
-            conn = psycopg2.connect(**self.config)
-            logger.debug("Database connection established")
-            yield conn
-            conn.commit()
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            logger.error(f"Database error: {e}")
-            raise
-        finally:
-            if conn:
-                conn.close()
-                logger.debug("Database connection closed")
     
     def execute_query(
         self,
         query: str,
-        params: Optional[tuple] = None,
+        params: Optional[dict] = None,
         fetch: bool = True
     ) -> Optional[List[tuple]]:
         """
-        Execute SQL query
+        Execute SQL query using SQLAlchemy
         
         Args:
             query: SQL query string
-            params: Query parameters
+            params: Query parameters as dict
             fetch: Whether to fetch results
             
         Returns:
             Query results if fetch=True
         """
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, params)
-                
-                if fetch:
-                    results = cursor.fetchall()
-                    logger.info(f"Query executed, {len(results)} rows returned")
-                    return results
-                else:
-                    logger.info("Query executed successfully")
-                    return None
+        with self.engine.connect() as conn:
+            result = conn.execute(text(query), params or {})
+            
+            if fetch:
+                rows = result.fetchall()
+                logger.info(f"Query executed, {len(rows)} rows returned")
+                return rows
+            else:
+                conn.commit()
+                logger.info("Query executed successfully")
+                return None
     
     def read_sql(
         self,
         query: str,
-        params: Optional[tuple] = None
+        params: Optional[dict] = None
     ) -> pd.DataFrame:
         """
         Execute query and return pandas DataFrame
         
         Args:
             query: SQL query string
-            params: Query parameters
+            params: Query parameters as dict
             
         Returns:
             pandas DataFrame with query results
         """
-        with self.get_connection() as conn:
-            df = pd.read_sql_query(query, conn, params=params)
+        with self.engine.connect() as conn:
+            df = pd.read_sql_query(text(query), conn, params=params)
             logger.info(f"Query executed, DataFrame shape: {df.shape}")
             return df
     
@@ -112,7 +102,7 @@ class DatabaseConnector:
         table_name: str,
         schema: str = 'analytics',
         if_exists: str = 'append',
-        chunksize: int = 1000
+        chunksize: int = 500  # Safe batch size for PostgreSQL
     ) -> int:
         """
         Write DataFrame to database table
@@ -127,40 +117,16 @@ class DatabaseConnector:
         Returns:
             Number of rows written
         """
-        with self.get_connection() as conn:
-            rows_written = df.to_sql(
-                name=table_name,
-                con=conn,
-                schema=schema,
-                if_exists=if_exists,
-                index=False,
-                chunksize=chunksize,
-                method='multi'
-            )
-            logger.info(f"Written {len(df)} rows to {schema}.{table_name}")
-            return len(df)
-    
-    def execute_many(
-        self,
-        query: str,
-        data: List[tuple]
-    ) -> int:
-        """
-        Execute query with multiple parameter sets
-        
-        Args:
-            query: SQL query with placeholders
-            data: List of parameter tuples
-            
-        Returns:
-            Number of rows affected
-        """
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.executemany(query, data)
-                rows_affected = cursor.rowcount
-                logger.info(f"Batch insert: {rows_affected} rows affected")
-                return rows_affected
+        df.to_sql(
+            name=table_name,
+            con=self.engine,
+            schema=schema,
+            if_exists=if_exists,
+            index=False,
+            chunksize=chunksize
+        )
+        logger.info(f"Written {len(df)} rows to {schema}.{table_name}")
+        return len(df)
     
     def table_exists(
         self,
@@ -171,11 +137,11 @@ class DatabaseConnector:
         query = """
         SELECT EXISTS (
             SELECT FROM information_schema.tables 
-            WHERE table_schema = %s 
-            AND table_name = %s
+            WHERE table_schema = :schema 
+            AND table_name = :table_name
         );
         """
-        result = self.execute_query(query, (schema, table_name))
+        result = self.execute_query(query, {'schema': schema, 'table_name': table_name})
         return result[0][0] if result else False
     
     def get_table_info(
@@ -191,11 +157,17 @@ class DatabaseConnector:
             is_nullable,
             column_default
         FROM information_schema.columns
-        WHERE table_schema = %s
-        AND table_name = %s
+        WHERE table_schema = :schema
+        AND table_name = :table_name
         ORDER BY ordinal_position;
         """
-        return self.read_sql(query, (schema, table_name))
+        return self.read_sql(query, {'schema': schema, 'table_name': table_name})
+    
+    def truncate_table(self, table_name: str, schema: str = 'raw') -> None:
+        """Truncate a table"""
+        query = f"TRUNCATE TABLE {schema}.{table_name} CASCADE"
+        self.execute_query(query, fetch=False)
+        logger.info(f"Truncated: {schema}.{table_name}")
 
 
 # Convenience functions

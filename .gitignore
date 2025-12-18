@@ -28,6 +28,9 @@ htmlcov/
 week-01-02-sql-python/postgres/data/*
 !week-01-02-sql-python/postgres/data/.gitkeep
 
+# Week 03-04 Data
+week-03-04-python-etl/raw_data/
+
 # PgAdmin data
 week-01-02-sql-python/pgadmin/data/*
 
