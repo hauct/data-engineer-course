@@ -1,7 +1,7 @@
-# File: data-engineer-course/docker-compose.yml
-
 services:
-  # PostgreSQL Database
+  # ============================================================================
+  # POSTGRESQL DATABASE
+  # ============================================================================
   postgres:
     image: postgres:15-alpine
     container_name: de-postgres
@@ -14,29 +14,25 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      # Named volume for data persistence
       - postgres_data:/var/lib/postgresql/data
-      # Init scripts (only run on first start)
       - ./week-01-02-sql-python/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-dataengineer} -d ${POSTGRES_DB:-data_engineer}",
-        ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dataengineer}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - de-network
 
-  # PgAdmin - Web UI for PostgreSQL
+  # ============================================================================
+  # PGADMIN
+  # ============================================================================
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: de-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@dataeng.local}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@gmail.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
@@ -51,7 +47,9 @@ services:
     networks:
       - de-network
 
-  # Jupyter Lab - Python Development
+  # ============================================================================
+  # JUPYTER LAB (Week 01-04)
+  # ============================================================================
   jupyter:
     build:
       context: ./week-01-02-sql-python/jupyter
@@ -66,21 +64,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-dataengineer}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dataengineer123}
       POSTGRES_DB: ${POSTGRES_DB:-data_engineer}
-      GENERATE_CUSTOMERS: ${GENERATE_CUSTOMERS:-1000}
-      GENERATE_PRODUCTS: ${GENERATE_PRODUCTS:-100}
-      GENERATE_ORDERS: ${GENERATE_ORDERS:-10000}
     ports:
       - "${JUPYTER_PORT:-8888}:8888"
     volumes:
-      # Week 01-02: SQL & Python basics
       - ./week-01-02-sql-python/exercises:/home/jovyan/week-01-02-sql-python/exercises
       - ./week-01-02-sql-python/scripts:/home/jovyan/week-01-02-sql-python/scripts
-      # Week 03-04: Python ETL
       - ./week-03-04-python-etl/notebooks:/home/jovyan/week-03-04-python-etl/notebooks
       - ./week-03-04-python-etl/scripts:/home/jovyan/week-03-04-python-etl/scripts
       - ./week-03-04-python-etl/raw_data:/home/jovyan/week-03-04-python-etl/raw_data
-      - ./week-03-04-python-etl/sql:/home/jovyan/week-03-04-python-etl/sql
-      # Shared resources
       - ./shared:/home/jovyan/shared
     depends_on:
       postgres:
@@ -88,6 +79,292 @@ services:
     networks:
       - de-network
 
+  # ============================================================================
+  # SPARK MASTER
+  # ============================================================================
+  spark-master:
+    image: apache/spark:3.5.1
+    container_name: spark-master
+    hostname: spark-master
+    restart: unless-stopped
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+      - SPARK_PUBLIC_DNS=localhost
+    volumes:
+      - ./week-05-06-pyspark-big-data/apps:/opt/spark-apps
+      - ./week-05-06-pyspark-big-data/data:/opt/spark-data
+      - ./week-05-06-pyspark-big-data/spark-events:/opt/spark-events
+    networks:
+      de-network:
+        aliases:
+          - spark-master
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ============================================================================
+  # SPARK WORKER 1
+  # ============================================================================
+  spark-worker-1:
+    image: apache/spark:3.5.1
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    restart: unless-stopped
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    ports:
+      - "8081:8081"
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_WEBUI_PORT=8081
+      - SPARK_PUBLIC_DNS=localhost
+    volumes:
+      - ./week-05-06-pyspark-big-data/apps:/opt/spark-apps
+      - ./week-05-06-pyspark-big-data/data:/opt/spark-data
+    networks:
+      de-network:
+        aliases:
+          - spark-worker-1
+
+  # ============================================================================
+  # SPARK WORKER 2
+  # ============================================================================
+  spark-worker-2:
+    image: apache/spark:3.5.1
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    restart: unless-stopped
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    ports:
+      - "8082:8082"
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_WEBUI_PORT=8082
+      - SPARK_PUBLIC_DNS=localhost
+    volumes:
+      - ./week-05-06-pyspark-big-data/apps:/opt/spark-apps
+      - ./week-05-06-pyspark-big-data/data:/opt/spark-data
+    networks:
+      de-network:
+        aliases:
+          - spark-worker-2
+
+  # ============================================================================
+  # JUPYTER WITH PYSPARK - SIMPLIFIED
+  # ============================================================================
+  jupyter-spark:
+    build:
+      context: ./week-05-06-pyspark-big-data/jupyter
+      dockerfile: Dockerfile
+    image: de-jupyter-pyspark:latest
+    container_name: jupyter-spark
+    hostname: jupyter-spark
+    restart: unless-stopped
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "8889:8888"
+      - "4041:4040"
+    environment:
+      - PYSPARK_MASTER=spark://spark-master:7077
+      - PYSPARK_PYTHON=python3
+      - SPARK_PUBLIC_DNS=localhost
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-dataengineer}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-dataengineer123}
+      - POSTGRES_DB=${POSTGRES_DB:-data_engineer}
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+      - AWS_ENDPOINT_URL=http://minio:9000
+    volumes:
+      - ./week-05-06-pyspark-big-data/notebooks:/opt/spark-notebooks
+      - ./week-05-06-pyspark-big-data/data:/opt/spark-data
+      - ./week-05-06-pyspark-big-data/apps:/opt/spark-apps
+      - ./week-05-06-pyspark-big-data/scripts:/opt/spark-scripts
+      - ./week-05-06-pyspark-big-data/spark-events:/opt/spark-events
+      - ./shared:/opt/shared
+    networks:
+      de-network:
+        aliases:
+          - jupyter-spark
+
+  # ============================================================================
+  # SPARK HISTORY SERVER
+  # ============================================================================
+  spark-history:
+    image: apache/spark:3.5.1
+    container_name: spark-history
+    hostname: spark-history
+    restart: unless-stopped
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    ports:
+      - "18080:18080"
+    environment:
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=/opt/spark-events
+    volumes:
+      - ./week-05-06-pyspark-big-data/spark-events:/opt/spark-events
+    depends_on:
+      - spark-master
+    networks:
+      de-network:
+        aliases:
+          - spark-history
+
+  # ============================================================================
+  # MINIO - S3 Compatible Storage
+  # ============================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: de-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - de-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # MINIO CLIENT - Initialize Buckets
+  # ============================================================================
+  minio-client:
+    image: minio/mc:latest
+    container_name: de-minio-client
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for MinIO to be ready...';
+      sleep 10;
+      echo 'Configuring MinIO client...';
+      mc alias set myminio http://minio:9000 minioadmin minioadmin123;
+      echo 'Creating buckets...';
+      mc mb myminio/spark-data --ignore-existing;
+      mc mb myminio/delta-lake --ignore-existing;
+      mc mb myminio/checkpoints --ignore-existing;
+      mc mb myminio/warehouse --ignore-existing;
+      echo '✅ MinIO setup completed successfully!';
+      exit 0;
+      "
+    networks:
+      - de-network
+
+  # ============================================================================
+  # ZOOKEEPER (Optional - for Streaming)
+  # ============================================================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: de-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - de-network
+    profiles:
+      - streaming
+
+  # ============================================================================
+  # KAFKA (Optional - for Streaming)
+  # ============================================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: de-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - de-network
+    profiles:
+      - streaming
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-broker-api-versions",
+          "--bootstrap-server",
+          "localhost:9092",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================================================
+  # KAFKA UI (Optional - for Streaming)
+  # ============================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: de-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8090:8080"
+    networks:
+      - de-network
+    profiles:
+      - streaming
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
 volumes:
   postgres_data:
     driver: local
@@ -95,7 +372,22 @@ volumes:
   pgadmin_data:
     driver: local
     name: de_pgadmin_data
+  minio_data:
+    driver: local
+    name: de_minio_data
+  zookeeper_data:
+    driver: local
+    name: de_zookeeper_data
+  zookeeper_logs:
+    driver: local
+    name: de_zookeeper_logs
+  kafka_data:
+    driver: local
+    name: de_kafka_data
 
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
 networks:
   de-network:
     driver: bridge

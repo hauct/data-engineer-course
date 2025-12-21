@@ -52,10 +52,11 @@ ORDERS_PER_DAY_RANGE = (100, 500)
 ITEMS_PER_ORDER_RANGE = (1, 5)
 
 # Error rates (for learning purposes)
-DUPLICATE_RATE = 0.04  # 4% duplicates
-NULL_RATE = 0.01       # 1% nulls
+DUPLICATE_NAME_RATE = 0.04  # 4% duplicate names (same person, different email)
+NULL_NAME_RATE = 0.02       # 2% null names
+NULL_COUNTRY_RATE = 0.01    # 1% null country
 LOWERCASE_NAME_RATE = 0.10  # 10% lowercase names (to fix in STG)
-INVALID_EMAIL_RATE = 0.02   # 2% invalid emails
+INVALID_EMAIL_RATE = 0.02   # 2% invalid emails (but still unique)
 
 # Categories and Products
 CATEGORIES = ['Electronics', 'Clothing', 'Food', 'Books', 'Home', 'Sports', 'Toys']
@@ -71,16 +72,23 @@ def get_raw_data_dir():
 
 
 def introduce_errors_customer(customer: dict, error_rng: random.Random) -> dict:
-    """Introduce intentional errors into customer data"""
-    # Lowercase name (10% chance)
-    if error_rng.random() < LOWERCASE_NAME_RATE:
+    """
+    Introduce intentional errors into customer data
+    
+    Rules:
+    - email: ALWAYS unique, NEVER null (enforced in generation)
+    - customer_name: Can be null (2% chance), can be lowercase (10% chance)
+    - country: Can be null (1% chance)
+    """
+    # ✅ Lowercase name (10% chance) - only if name is not null
+    if customer['customer_name'] is not None and error_rng.random() < LOWERCASE_NAME_RATE:
         customer['customer_name'] = customer['customer_name'].lower()
     
-    # Null values (1% chance for optional fields)
-    if error_rng.random() < NULL_RATE:
+    # ✅ Null country (1% chance)
+    if error_rng.random() < NULL_COUNTRY_RATE:
         customer['country'] = None
     
-    # Invalid email (2% chance)
+    # ✅ Invalid email format (2% chance) - but still unique
     if error_rng.random() < INVALID_EMAIL_RATE:
         customer['email'] = customer['email'].replace('@', '_at_')
     
@@ -115,71 +123,125 @@ def generate_products_master() -> pd.DataFrame:
 def generate_customers_for_day(
     day: date,
     start_customer_id: int,
-    error_rng: random.Random
+    error_rng: random.Random,
+    global_emails: set = None
 ) -> pd.DataFrame:
-    """Generate new customers for a specific day"""
+    """
+    Generate new customers for a specific day
+    
+    Ensures:
+    - customer_id: ALWAYS unique (primary key)
+    - email: ALWAYS unique, NEVER null (business key)
+    - customer_name: Can be NULL (2% chance), can be duplicate (4% chance)
+    - country: Can be NULL (1% chance)
+    """
+    if global_emails is None:
+        global_emails = set()
+    
     num_customers = random.randint(*CUSTOMERS_PER_DAY_RANGE)
     customers = []
-    emails_used = set()
+    emails_used = global_emails.copy()  # ✅ Start with global emails
     customer_ids_used = set()
+    null_name_count = 0
+    duplicate_name_count = 0
     
+    # Generate base customers
     for i in range(num_customers):
         customer_id = start_customer_id + i
         customer_ids_used.add(customer_id)
         
-        # Generate unique email
+        # ✅ Generate UNIQUE email (check against global set)
         email = fake.email()
-        while email in emails_used:
+        attempt = 0
+        while email in emails_used and attempt < 1000:
             email = fake.email()
+            attempt += 1
+        
+        # Fallback: if still duplicate after 1000 attempts
+        if email in emails_used:
+            email = f"{fake.user_name()}_{customer_id}_{day.strftime('%Y%m%d')}@{fake.domain_name()}"
+        
         emails_used.add(email)
+        
+        # ✅ Generate customer_name (can be NULL with 2% chance)
+        if error_rng.random() < NULL_NAME_RATE:
+            customer_name = None
+            null_name_count += 1
+        else:
+            customer_name = fake.name()[:200]
         
         customer = {
             'customer_id': customer_id,
-            'customer_name': fake.name()[:200],
+            'customer_name': customer_name,
             'email': email[:200],
             'country': fake.country()[:100],
             'signup_date': day,
             'customer_segment': random.choice(CUSTOMER_SEGMENTS)
         }
         
-        # Introduce errors
+        # Introduce errors (lowercase, null country, invalid email format)
         customer = introduce_errors_customer(customer, error_rng)
         customers.append(customer)
     
-    # ✅ FIX: Add "duplicate people" with unique IDs and emails
+    # ✅ Add "duplicate people" (same name/country, different ID/email)
     # This simulates: same person signing up multiple times
-    num_duplicates = int(len(customers) * DUPLICATE_RATE)
+    num_duplicates = int(len(customers) * DUPLICATE_NAME_RATE)
     if num_duplicates > 0 and customers:
         next_id = start_customer_id + len(customers)
         
         for i in range(num_duplicates):
-            # Pick a random customer to duplicate
+            # Pick a random customer to duplicate (skip if name is null)
             original = random.choice(customers)
+            if original['customer_name'] is None:
+                continue
             
-            # Create new customer with SAME name/country but UNIQUE id/email
+            # Generate NEW unique customer_id
             new_customer_id = next_id + i
             while new_customer_id in customer_ids_used:
                 new_customer_id += 1
             customer_ids_used.add(new_customer_id)
             
-            # Generate new unique email
+            # Generate NEW unique email
             new_email = fake.email()
-            while new_email in emails_used:
+            attempt = 0
+            while new_email in emails_used and attempt < 1000:
                 new_email = fake.email()
+                attempt += 1
+            
+            if new_email in emails_used:
+                new_email = f"{fake.user_name()}_{new_customer_id}_{random.randint(1000, 9999)}@{fake.domain_name()}"
+            
             emails_used.add(new_email)
             
+            # Create duplicate with SAME name/country but UNIQUE id/email
             duplicate = {
-                'customer_id': new_customer_id,
-                'customer_name': original['customer_name'],  # ✅ SAME name
-                'email': new_email[:200],                     # ✅ UNIQUE email
-                'country': original['country'],               # ✅ SAME country
+                'customer_id': new_customer_id,              # ✅ UNIQUE
+                'customer_name': original['customer_name'],  # ❌ DUPLICATE (intentional)
+                'email': new_email[:200],                    # ✅ UNIQUE
+                'country': original['country'],              # ❌ DUPLICATE (intentional)
                 'signup_date': day,
                 'customer_segment': original['customer_segment']
             }
             
+            # Apply errors to duplicate too
+            duplicate = introduce_errors_customer(duplicate, error_rng)
             customers.append(duplicate)
+            duplicate_name_count += 1
     
-    return pd.DataFrame(customers) if customers else pd.DataFrame()
+    df = pd.DataFrame(customers) if customers else pd.DataFrame()
+    
+    # ✅ VERIFY: No duplicate IDs or emails
+    if not df.empty:
+        unique_ids = df['customer_id'].nunique()
+        unique_emails = df['email'].nunique()
+        total_records = len(df)
+        
+        assert unique_ids == total_records, f"❌ Duplicate customer_id! Expected {total_records}, got {unique_ids}"
+        assert unique_emails == total_records, f"❌ Duplicate email! Expected {total_records}, got {unique_emails}"
+        assert df['email'].isna().sum() == 0, "❌ Found NULL emails!"
+    
+    return df
+
 
 def generate_orders_for_day(
     day: date,
@@ -236,13 +298,13 @@ def generate_orders_for_day(
         })
     
     # Add duplicates to orders (4%)
-    num_dup_orders = int(len(orders) * DUPLICATE_RATE)
+    num_dup_orders = int(len(orders) * 0.04)
     if num_dup_orders > 0:
         dup_orders = random.choices(orders, k=num_dup_orders)
         orders.extend(dup_orders)
     
     # Add duplicates to order_items (4%)
-    num_dup_items = int(len(order_items) * DUPLICATE_RATE)
+    num_dup_items = int(len(order_items) * 0.04)
     if num_dup_items > 0:
         dup_items = random.choices(order_items, k=num_dup_items)
         order_items.extend(dup_items)
@@ -283,11 +345,14 @@ def generate_all_data(output_dir: Path, test_mode: bool = False):
     
     # Tracking
     all_customer_ids = []
+    all_emails = set()  # ✅ Track emails globally across all days
     current_customer_id = 1
     current_order_id = 1
     
     # Stats
     total_customers = 0
+    total_unique_emails = 0
+    total_null_names = 0
     total_orders = 0
     total_items = 0
     
@@ -297,7 +362,7 @@ def generate_all_data(output_dir: Path, test_mode: bool = False):
         
         # Generate customers for this day
         customers_df = generate_customers_for_day(
-            day, current_customer_id, error_rng
+            day, current_customer_id, error_rng, all_emails  # ✅ Pass emails
         )
         
         if not customers_df.empty:
@@ -306,11 +371,22 @@ def generate_all_data(output_dir: Path, test_mode: bool = False):
                 customers_df,
                 output_dir / 'customers' / day_str / 'data.parquet'
             )
+
+            # ✅ Update global email set
+            new_emails = set(customers_df['email'].dropna().unique())
+            all_emails.update(new_emails)
             
-            # Track customer IDs
+            # Track statistics
             new_ids = customers_df['customer_id'].unique().tolist()
             all_customer_ids.extend(new_ids)
-            current_customer_id += len(customers_df[~customers_df.duplicated(subset=['customer_id'])])
+            
+            new_emails = set(customers_df['email'].dropna().unique())
+            all_emails.update(new_emails)
+            
+            null_names = customers_df['customer_name'].isna().sum()
+            total_null_names += null_names
+            
+            current_customer_id += len(customers_df)
             total_customers += len(customers_df)
         
         # Save products (same data each day for simplicity)
@@ -335,9 +411,11 @@ def generate_all_data(output_dir: Path, test_mode: bool = False):
                     output_dir / 'order_items' / day_str / 'data.parquet'
                 )
                 
-                current_order_id += len(orders_df[~orders_df.duplicated(subset=['order_id'])])
+                current_order_id += len(orders_df)
                 total_orders += len(orders_df)
                 total_items += len(order_items_df)
+    
+    total_unique_emails = len(all_emails)
     
     # Print summary
     print(f"\n{'='*60}")
@@ -351,11 +429,16 @@ def generate_all_data(output_dir: Path, test_mode: bool = False):
     print(f"  Products:    {len(products_df):,} (same each day)")
     print(f"  Orders:      {total_orders:,}")
     print(f"  Order Items: {total_items:,}")
+    print(f"\n✅ Data Quality Metrics:")
+    print(f"  Unique Emails:       {total_unique_emails:,} (100% of customers)")
+    print(f"  NULL Names:          {total_null_names:,} ({total_null_names/total_customers*100:.1f}%)")
+    print(f"  Duplicate Names:     ~{int(total_customers * DUPLICATE_NAME_RATE):,} ({DUPLICATE_NAME_RATE*100:.0f}%)")
     print(f"\nError rates applied:")
-    print(f"  Duplicates:      {DUPLICATE_RATE*100:.0f}%")
-    print(f"  Nulls:           {NULL_RATE*100:.0f}%")
-    print(f"  Lowercase names: {LOWERCASE_NAME_RATE*100:.0f}%")
-    print(f"  Invalid emails:  {INVALID_EMAIL_RATE*100:.0f}%")
+    print(f"  Duplicate names:     {DUPLICATE_NAME_RATE*100:.0f}%")
+    print(f"  NULL names:          {NULL_NAME_RATE*100:.0f}%")
+    print(f"  NULL country:        {NULL_COUNTRY_RATE*100:.0f}%")
+    print(f"  Lowercase names:     {LOWERCASE_NAME_RATE*100:.0f}%")
+    print(f"  Invalid email format:{INVALID_EMAIL_RATE*100:.0f}%")
     print(f"{'='*60}\n")
 
 
