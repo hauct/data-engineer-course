@@ -383,212 +383,330 @@ etl-help: ## Show detailed ETL help
 	@echo "  make etl-clear-all       # Clear all ETL data"
 
 # ==============================================================================
-# WEEK 05-06: PYSPARK BIG DATA
+# WEEK 05-06: PYSPARK BIG DATA - GIT BASH COMPATIBLE
 # ==============================================================================
 
-PYSPARK_DIR := week-05-06-pyspark-big-data
+.DEFAULT_GOAL := pyspark-help
 
-.PHONY: pyspark-build
-pyspark-build: ## Build PySpark images only
-	@echo "🔨 Building Spark images..."
-	@echo ""
-	@echo "1/2: Building Spark base image..."
-	cd week-05-06-pyspark-big-data/spark && docker build --no-cache -t de-spark:3.5.1 .
-	@echo ""
-	@echo "2/2: Building Jupyter-Spark image..."
-	cd week-05-06-pyspark-big-data/jupyter && docker build --no-cache -t de-jupyter-pyspark:latest .
-	@echo ""
-	@echo "✅ Build completed!"
-
-.PHONY: pyspark-rebuild
-pyspark-rebuild: ## Force rebuild all PySpark images
-	@echo "🔨 Force rebuilding all images..."
-	@docker rmi -f de-spark:3.5.1 de-jupyter-pyspark:latest 2>/dev/null || true
-	@$(MAKE) pyspark-build
-
+# ==============================================================================
+# 1. START - BUILD & RUN EVERYTHING
+# ==============================================================================
 .PHONY: pyspark-start
-pyspark-start: ## Start PySpark cluster (build if needed)
-	@echo "🚀 Starting PySpark Big Data environment..."
+pyspark-start: ## Build images and start PySpark cluster
+	@echo "================================================================================"
+	@echo "STARTING PYSPARK BIG DATA ENVIRONMENT"
+	@echo "================================================================================"
 	@echo ""
 	
-	@echo "📦 Step 1/7: Checking images..."
+	@echo "Step 1/5: Building Docker images..."
 	@if ! docker images | grep -q "de-spark.*3.5.1"; then \
 		echo "   Building Spark image..."; \
-		cd week-05-06-pyspark-big-data/spark && docker build -t de-spark:3.5.1 .; \
+		cd week-05-06-pyspark-big-data/spark && docker build -t de-spark:3.5.1 . || exit 1; \
 	else \
-		echo "   ✅ Spark image exists"; \
+		echo "   [OK] Spark image exists"; \
 	fi
 	@if ! docker images | grep -q "de-jupyter-pyspark.*latest"; then \
 		echo "   Building Jupyter-Spark image..."; \
-		cd week-05-06-pyspark-big-data/jupyter && docker build -t de-jupyter-pyspark:latest .; \
+		cd week-05-06-pyspark-big-data/jupyter && docker build -t de-jupyter-pyspark:latest . || exit 1; \
 	else \
-		echo "   ✅ Jupyter-Spark image exists"; \
+		echo "   [OK] Jupyter-Spark image exists"; \
 	fi
 	@echo ""
 	
-	@echo "🗄️  Step 2/7: Starting PostgreSQL and MinIO..."
+	@echo "Step 2/5: Starting PostgreSQL and MinIO..."
 	@docker-compose up -d postgres minio
-	@echo "   ⏳ Waiting 15 seconds..."
+	@echo "   Waiting 15 seconds for services to initialize..."
 	@sleep 15
 	@echo ""
 	
-	@echo "🪣 Step 3/7: Creating MinIO buckets..."
+	@echo "Step 3/5: Creating MinIO buckets..."
 	@docker-compose up -d minio-client
-	@echo "   ⏳ Waiting 10 seconds..."
+	@echo "   Waiting 10 seconds..."
 	@sleep 10
 	@echo ""
 	
-	@echo "⚡ Step 4/7: Starting Spark Master..."
+	@echo "Step 4/5: Starting Spark cluster..."
 	@docker-compose up -d spark-master
-	@echo "   ⏳ Waiting for Spark Master to be healthy (max 60s)..."
+	@echo "   Waiting for Spark Master (max 60s)..."
 	@for i in $$(seq 1 30); do \
-		if docker inspect de-spark-master 2>/dev/null | grep -q '"Status": "healthy"'; then \
-			echo "   ✅ Spark Master is healthy!"; \
+		if curl -s http://localhost:8080 > /dev/null 2>&1; then \
+			echo "   [OK] Spark Master is ready!"; \
 			break; \
 		fi; \
-		echo "   ⏳ Attempt $$i/30..."; \
+		if [ $$i -eq 30 ]; then \
+			echo "   [FAIL] Spark Master failed to start"; \
+			exit 1; \
+		fi; \
 		sleep 2; \
 	done
-	@echo ""
-	
-	@echo "👷 Step 5/7: Starting Spark Workers..."
-	@docker-compose up -d spark-worker-1 spark-worker-2
-	@echo "   ⏳ Waiting 15 seconds..."
+	@docker-compose up -d spark-worker-1 spark-worker-2 spark-history
+	@echo "   Waiting 15 seconds for workers..."
 	@sleep 15
 	@echo ""
 	
-	@echo "📜 Step 6/7: Starting Spark History Server..."
-	@docker-compose up -d spark-history
-	@echo "   ⏳ Waiting 5 seconds..."
-	@sleep 5
-	@echo ""
-	
-	@echo "📓 Step 7/7: Starting Jupyter-Spark..."
+	@echo "Step 5/5: Starting Jupyter-Spark..."
 	@docker-compose up -d jupyter-spark
-	@echo "   ⏳ Waiting 10 seconds..."
+	@echo "   Waiting 10 seconds..."
 	@sleep 10
 	@echo ""
 	
-	@echo "✅ =============================================="
-	@echo "✅  PYSPARK ENVIRONMENT STARTED SUCCESSFULLY!"
-	@echo "✅ =============================================="
+	@echo "================================================================================"
+	@echo "PYSPARK ENVIRONMENT STARTED SUCCESSFULLY!"
+	@echo "================================================================================"
 	@echo ""
-	@docker-compose ps | grep -E "de-spark|de-jupyter-spark|de-minio|de-postgres"
+	@echo "Running Services:"
+	@docker-compose ps | grep -E "spark|jupyter|minio|postgres" || true
 	@echo ""
-	@echo "📊 Access points:"
+	@echo "Access Points:"
 	@echo "   - Jupyter Lab:      http://localhost:8889 (token: dataengineer)"
 	@echo "   - Spark Master UI:  http://localhost:8080"
 	@echo "   - Spark Job UI:     http://localhost:4041"
 	@echo "   - Spark Worker 1:   http://localhost:8081"
 	@echo "   - Spark Worker 2:   http://localhost:8082"
 	@echo "   - Spark History:    http://localhost:18080"
-	@echo "   - MinIO Console:    http://localhost:9001"
+	@echo "   - MinIO Console:    http://localhost:9001 (minioadmin/minioadmin123)"
+	@echo "   - PostgreSQL:       localhost:5432 (dataengineer/dataengineer123)"
 	@echo ""
-	@echo "🧪 Test connection: make pyspark-test"
+	@echo "Next steps:"
+	@echo "   - Check status:  make pyspark-check"
+	@echo "   - View help:     make pyspark-help"
+	@echo ""
 
+# ==============================================================================
+# 2. CHECK - VERIFY EVERYTHING IS WORKING
+# ==============================================================================
 .PHONY: pyspark-check
-pyspark-check: ## Quick check if PySpark is running
-	@echo "🔍 Checking PySpark services..."
+pyspark-check: ## Check if all services are running properly
+	@echo "================================================================================"
+	@echo "CHECKING PYSPARK ENVIRONMENT"
+	@echo "================================================================================"
 	@echo ""
-	@echo "📦 Docker Images:"
-	@docker images | grep -E "de-spark|de-jupyter-pyspark" || echo "   ❌ No images found"
+	
+	@echo "1. Docker Images:"
+	@if docker images | grep -q "de-spark.*3.5.1"; then \
+		echo "   [OK] de-spark:3.5.1"; \
+	else \
+		echo "   [FAIL] de-spark:3.5.1 missing"; \
+	fi
+	@if docker images | grep -q "de-jupyter-pyspark.*latest"; then \
+		echo "   [OK] de-jupyter-pyspark:latest"; \
+	else \
+		echo "   [FAIL] de-jupyter-pyspark:latest missing"; \
+	fi
 	@echo ""
-	@echo "🐳 Running Containers:"
-	@docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "de-spark|de-jupyter-spark" || echo "   ❌ No containers running"
+	
+	@echo "2. Running Containers:"
+	@for service in spark-master spark-worker-1 spark-worker-2 spark-history jupyter-spark minio postgres; do \
+		if docker ps --format '{{.Names}}' | grep -q "$$service"; then \
+			echo "   [OK] $$service"; \
+		else \
+			echo "   [FAIL] $$service not running"; \
+		fi; \
+	done
 	@echo ""
-	@echo "🌐 Service Health:"
-	@printf "   Spark Master:    "
-	@curl -s http://localhost:8080 > /dev/null && echo "✅ OK" || echo "❌ DOWN"
-	@printf "   Spark Worker 1:  "
-	@curl -s http://localhost:8081 > /dev/null && echo "✅ OK" || echo "❌ DOWN"
-	@printf "   Spark Worker 2:  "
-	@curl -s http://localhost:8082 > /dev/null && echo "✅ OK" || echo "❌ DOWN"
-	@printf "   Jupyter-Spark:   "
-	@curl -s http://localhost:8889 > /dev/null && echo "✅ OK" || echo "❌ DOWN"
-	@printf "   MinIO:           "
-	@curl -s http://localhost:9001 > /dev/null && echo "✅ OK" || echo "❌ DOWN"
-
-# Start with streaming (Kafka)
-.PHONY: pyspark-start-streaming
-pyspark-start-streaming:
-	@echo "🚀 Starting PySpark with Kafka..."
-	docker-compose --profile streaming up -d
-	@echo "✅ All services started (including Kafka)!"
-	@echo "  - Kafka UI: http://localhost:8090"
-
-# Stop PySpark services
-.PHONY: pyspark-stop
-pyspark-stop:
-	@echo "🛑 Stopping PySpark services..."
-	docker-compose stop spark-master spark-worker-1 spark-worker-2 spark-history jupyter-spark minio
-
-# Restart PySpark services
-.PHONY: pyspark-restart
-pyspark-restart: pyspark-stop pyspark-start
-
-# View logs
-.PHONY: pyspark-logs
-pyspark-logs:
-	docker-compose logs -f spark-master spark-worker-1 spark-worker-2 jupyter-spark
-
-# Test Spark connection
-.PHONY: pyspark-test
-pyspark-test:
-	@echo "🧪 Testing Spark connection..."
-	docker exec -it de-jupyter-spark python /home/jovyan/apps/test_spark_connection.py
-
-# Shell into Jupyter-Spark
-.PHONY: pyspark-shell
-pyspark-shell:
-	docker exec -it de-jupyter-spark bash
-
-# PySpark shell (interactive)
-.PHONY: pyspark-repl
-pyspark-repl:
-	docker exec -it de-jupyter-spark pyspark --master spark://spark-master:7077
-
-# Check Spark cluster status
-.PHONY: pyspark-status
-pyspark-status:
-	@echo "📊 Spark Cluster Status:"
+	
+	@echo "3. Service Health (HTTP):"
+	@printf "   Spark Master (8080):    "
+	@if curl -s http://localhost:8080 > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
+	@printf "   Spark Worker 1 (8081):  "
+	@if curl -s http://localhost:8081 > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
+	@printf "   Spark Worker 2 (8082):  "
+	@if curl -s http://localhost:8082 > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
+	@printf "   Spark History (18080):  "
+	@if curl -s http://localhost:18080 > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
+	@printf "   Jupyter-Spark (8889):   "
+	@if curl -s http://localhost:8889 > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
+	@printf "   MinIO Console (9001):   "
+	@if curl -s http://localhost:9001 > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
+	@printf "   PostgreSQL (5432):      "
+	@if docker exec postgres pg_isready -U dataengineer > /dev/null 2>&1; then \
+		echo "[OK]"; \
+	else \
+		echo "[FAIL]"; \
+	fi
 	@echo ""
-	@echo "Master:"
-	@curl -s http://localhost:8080 > /dev/null && echo "  ✅ Running" || echo "  ❌ Not running"
+	
+	@echo "4. Data Directories:"
+	@if docker exec jupyter-spark test -d /opt/spark-data/raw 2>/dev/null; then \
+		echo "   [OK] /opt/spark-data/raw"; \
+	else \
+		echo "   [FAIL] /opt/spark-data/raw missing"; \
+	fi
+	@if docker exec jupyter-spark test -d /opt/spark-data/staging 2>/dev/null; then \
+		echo "   [OK] /opt/spark-data/staging"; \
+	else \
+		echo "   [FAIL] /opt/spark-data/staging missing"; \
+	fi
+	@if docker exec jupyter-spark test -d /opt/spark-data/production 2>/dev/null; then \
+		echo "   [OK] /opt/spark-data/production"; \
+	else \
+		echo "   [FAIL] /opt/spark-data/production missing"; \
+	fi
 	@echo ""
-	@echo "Workers:"
-	@curl -s http://localhost:8081 > /dev/null && echo "  ✅ Worker 1 Running" || echo "  ❌ Worker 1 Not running"
-	@curl -s http://localhost:8082 > /dev/null && echo "  ✅ Worker 2 Running" || echo "  ❌ Worker 2 Not running"
+	
+	@echo "5. MinIO Buckets:"
+	@if docker exec de-minio-client mc ls myminio 2>/dev/null | grep -q "raw"; then \
+		echo "   [OK] raw"; \
+	else \
+		echo "   [FAIL] raw missing"; \
+	fi
+	@if docker exec de-minio-client mc ls myminio 2>/dev/null | grep -q "staging"; then \
+		echo "   [OK] staging"; \
+	else \
+		echo "   [FAIL] staging missing"; \
+	fi
+	@if docker exec de-minio-client mc ls myminio 2>/dev/null | grep -q "production"; then \
+		echo "   [OK] production"; \
+	else \
+		echo "   [FAIL] production missing"; \
+	fi
 	@echo ""
-	@echo "Jupyter-Spark:"
-	@curl -s http://localhost:8889 > /dev/null && echo "  ✅ Running" || echo "  ❌ Not running"
+	
+	@echo "================================================================================"
+	@echo "Health check completed!"
+	@echo "================================================================================"
+	@echo ""
 
-# Generate sample data
-.PHONY: pyspark-generate-data
-pyspark-generate-data:
-	@echo "📊 Generating sample data..."
-	docker exec -it de-jupyter-spark python /home/jovyan/apps/generate_sample_data.py
-
-# Clean PySpark data
+# ==============================================================================
+# 3. CLEAN DATA - REMOVE ALL DATA FILES
+# ==============================================================================
 .PHONY: pyspark-clean-data
-pyspark-clean-data:
-	@echo "🗑️  Cleaning PySpark data..."
-	docker exec -it de-jupyter-spark rm -rf /home/jovyan/data/raw/* /home/jovyan/data/staging/* /home/jovyan/data/production/*
-	@echo "✅ Data cleaned!"
-
-# PySpark help
-.PHONY: pyspark-help
-pyspark-help:
-	@echo "📚 PySpark Commands:"
+pyspark-clean-data: ## Remove all data files (keep containers running)
+	@echo "================================================================================"
+	@echo "CLEANING ALL DATA FILES"
+	@echo "================================================================================"
 	@echo ""
-	@echo "  make pyspark-start              Start PySpark services"
-	@echo "  make pyspark-start-streaming    Start with Kafka"
-	@echo "  make pyspark-stop               Stop PySpark services"
-	@echo "  make pyspark-restart            Restart PySpark services"
-	@echo "  make pyspark-logs               View logs"
-	@echo "  make pyspark-test               Test Spark connection"
-	@echo "  make pyspark-shell              Shell into Jupyter-Spark"
-	@echo "  make pyspark-repl               PySpark interactive shell"
-	@echo "  make pyspark-status             Check cluster status"
-	@echo "  make pyspark-generate-data      Generate sample data"
-	@echo "  make pyspark-clean-data         Clean data directories"
-	@echo "  make pyspark-help               Show this help"
+	@echo "WARNING: This will delete ALL data files!"
+	@echo "   - Local filesystem: /opt/spark-data/*"
+	@echo "   - MinIO buckets: raw, staging, production"
+	@echo "   - Spark events: /opt/spark-events/*"
+	@echo ""
+	@read -p "Are you sure? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo ""; \
+		echo "Cleaning local filesystem..."; \
+		docker exec jupyter-spark sh -c "rm -rf /opt/spark-data/raw/* /opt/spark-data/staging/* /opt/spark-data/production/*" 2>/dev/null || true; \
+		echo "   [OK] Local data cleaned"; \
+		echo ""; \
+		echo "Cleaning MinIO buckets..."; \
+		docker exec de-minio-client mc rm --recursive --force myminio/raw/ 2>/dev/null || true; \
+		docker exec de-minio-client mc rm --recursive --force myminio/staging/ 2>/dev/null || true; \
+		docker exec de-minio-client mc rm --recursive --force myminio/production/ 2>/dev/null || true; \
+		echo "   [OK] MinIO buckets cleaned"; \
+		echo ""; \
+		echo "Cleaning Spark events..."; \
+		docker exec spark-master sh -c "rm -rf /opt/spark-events/*" 2>/dev/null || true; \
+		echo "   [OK] Spark events cleaned"; \
+		echo ""; \
+		echo "[OK] All data cleaned successfully!"; \
+	else \
+		echo ""; \
+		echo "Cancelled"; \
+	fi
+	@echo ""
+
+# ==============================================================================
+# 4. DESTROY - REMOVE EVERYTHING
+# ==============================================================================
+.PHONY: pyspark-destroy
+pyspark-destroy: ## Stop containers, remove images, volumes, and data
+	@echo "================================================================================"
+	@echo "DESTROYING PYSPARK ENVIRONMENT"
+	@echo "================================================================================"
+	@echo ""
+	@echo "WARNING: This will remove EVERYTHING!"
+	@echo "   - All containers (spark, jupyter, minio, postgres)"
+	@echo "   - All Docker images (de-spark, de-jupyter-pyspark)"
+	@echo "   - All Docker volumes (data, logs, etc.)"
+	@echo "   - All local data files"
+	@echo ""
+	@read -p "Are you ABSOLUTELY sure? Type 'yes' to confirm: " -r; \
+	echo; \
+	if [[ $$REPLY == "yes" ]]; then \
+		echo ""; \
+		echo "Stopping all containers..."; \
+		docker-compose down 2>/dev/null || true; \
+		echo "   [OK] Containers stopped"; \
+		echo ""; \
+		echo "Removing Docker images..."; \
+		docker rmi -f de-spark:3.5.1 2>/dev/null || true; \
+		docker rmi -f de-jupyter-pyspark:latest 2>/dev/null || true; \
+		echo "   [OK] Images removed"; \
+		echo ""; \
+		echo "Removing Docker volumes..."; \
+		docker volume rm de_minio_data 2>/dev/null || true; \
+		docker volume rm de_postgres_data 2>/dev/null || true; \
+		docker volume rm de_pgadmin_data 2>/dev/null || true; \
+		echo "   [OK] Volumes removed"; \
+		echo ""; \
+		echo "Cleaning local data directories..."; \
+		rm -rf week-05-06-pyspark-big-data/data/raw/* 2>/dev/null || true; \
+		rm -rf week-05-06-pyspark-big-data/data/staging/* 2>/dev/null || true; \
+		rm -rf week-05-06-pyspark-big-data/data/production/* 2>/dev/null || true; \
+		rm -rf week-05-06-pyspark-big-data/spark-events/* 2>/dev/null || true; \
+		echo "   [OK] Local data cleaned"; \
+		echo ""; \
+		echo "Pruning Docker system..."; \
+		docker system prune -f 2>/dev/null || true; \
+		echo "   [OK] Docker system pruned"; \
+		echo ""; \
+		echo "[OK] Everything destroyed successfully!"; \
+		echo ""; \
+		echo "To start fresh, run: make pyspark-start"; \
+	else \
+		echo ""; \
+		echo "Cancelled"; \
+	fi
+	@echo ""
+
+# ==============================================================================
+# HELP
+# ==============================================================================
+.PHONY: pyspark-help
+pyspark-help: ## Show this help message
+	@echo "================================================================================"
+	@echo "PYSPARK BIG DATA - AVAILABLE COMMANDS"
+	@echo "================================================================================"
+	@echo ""
+	@echo "Available commands:"
+	@echo ""
+	@echo "  pyspark-start         Build images and start PySpark cluster"
+	@echo "  pyspark-check         Check if all services are running properly"
+	@echo "  pyspark-clean-data    Remove all data files (keep containers running)"
+	@echo "  pyspark-destroy       Stop containers, remove images, volumes, and data"
+	@echo "  pyspark-help          Show this help message"
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  1. make pyspark-start       - Build and start everything"
+	@echo "  2. make pyspark-check       - Verify everything is working"
+	@echo "  3. Open Jupyter: http://localhost:8889 (token: dataengineer)"
+	@echo ""
+	@echo "Cleanup:"
+	@echo "  - make pyspark-clean-data   - Remove data files only"
+	@echo "  - make pyspark-destroy      - Remove everything (nuclear option)"
+	@echo ""

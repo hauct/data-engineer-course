@@ -1,0 +1,7 @@
+id,name,email,department,salary,age,hire_date
+1,John Doe,john@example.com,Engineering,75000,30,2020-01-15
+2,Jane Smith,jane@example.com,Sales,65000,28,2021-03-20
+3,Bad Record,missing_fields
+4,Bob Johnson,bob@example.com,HR,55000,35,2019-06-10
+5,Alice,alice@example.com,Marketing,INVALID,29,2022-01-05
+6,Charlie Brown,charlie@example.com,Finance,70000,32,2020-09-15
